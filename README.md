@@ -17,8 +17,11 @@ The parser backend is `cs-demo-analyzer`. The app auto-detects `csda.exe` from:
 
 - `CSDA_EXE`
 - `PATH`
+- `vendor/cs-demo-analyzer/csda.exe`
 - a `csda.exe` somewhere inside this project folder
 - the previous local npm test install under `%TEMP%\csda-npm-test`
+
+Packaged builds include the Windows `csda.exe` binary from `akiver/cs-demo-analyzer`.
 
 Launch:
 

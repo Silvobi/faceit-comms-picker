@@ -212,6 +212,10 @@ class DemoInspector:
     def resolve_csda() -> Path:
         candidates: list[Path] = []
 
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if bundle_root:
+            candidates.append(Path(bundle_root) / "vendor" / "cs-demo-analyzer" / "csda.exe")
+
         env_path = os.environ.get("CSDA_EXE")
         if env_path:
             candidates.append(Path(env_path))
@@ -222,6 +226,7 @@ class DemoInspector:
                 candidates.append(Path(found))
 
         root = Path(__file__).resolve().parent
+        candidates.append(root / "vendor" / "cs-demo-analyzer" / "csda.exe")
         candidates.extend(root.glob("**/csda.exe"))
 
         candidates.append(
