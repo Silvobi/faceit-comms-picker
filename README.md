@@ -2,6 +2,9 @@
 
 Small Python GUI for generating `tv_listen_voice_indices` commands for CS2 demo voice playback.
 
+This script fixes the problem of having to go through a lot of somewhat complicated steps just to be able to listen to selected team in FaceIT demo. The program parses demo, gets `spec_player` slots, uses numbers of these slots to convert from binary to decimal and uses the number in `tv_listen_voice_indices` command.
+-# This program was designed only for faceit demos - might not work on different demos with saved voice comms. Also it's more like proof-or-concept rather than fully funcionable program. And of course yes - it was vibe-coded
+
 ## Run
 
 Install dependencies:
