@@ -14,6 +14,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 APP_TITLE = "FACEIT Comms Picker"
+APP_VERSION = "v0.1.0-poc"
+PROJECT_URL = "https://github.com/Silvobi/faceit-comms-picker"
+CSDA_URL = "https://github.com/akiver/cs-demo-analyzer"
 UI_FONT_FAMILY = "Helvetica"
 UI_FONT_FALLBACK = "Segoe UI"
 MONO_FONT_FAMILY = "Consolas"
@@ -539,12 +542,15 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.main_tab = QtWidgets.QWidget()
         self.manual_tab = QtWidgets.QWidget()
         self.settings_tab = QtWidgets.QWidget()
+        self.about_tab = QtWidgets.QWidget()
         self.tabs.addTab(self.main_tab, "Commands")
         self.tabs.addTab(self.manual_tab, "Manual correction")
         self.tabs.addTab(self.settings_tab, "Settings")
+        self.tabs.addTab(self.about_tab, "About")
         self._build_main_tab()
         self._build_manual_tab()
         self._build_settings_tab()
+        self._build_about_tab()
 
         self.status = QtWidgets.QLabel("Ready.")
         self.status.setObjectName("muted")
@@ -647,6 +653,39 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         layout.addWidget(self.show_details_checkbox)
         layout.addStretch()
 
+    def _build_about_tab(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self.about_tab)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(12)
+
+        title = QtWidgets.QLabel(f"{APP_TITLE} {APP_VERSION}")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+
+        description = QtWidgets.QLabel(
+            "Proof-of-concept Windows tool for generating ready-to-paste CS2 FACEIT demo voice commands."
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        links = QtWidgets.QHBoxLayout()
+        links.addWidget(self._button("Project on GitHub", lambda: self.open_url(PROJECT_URL)))
+        links.addWidget(self._button("cs-demo-analyzer", lambda: self.open_url(CSDA_URL)))
+        links.addStretch()
+        layout.addLayout(links)
+
+        dependency = QtWidgets.QLabel(
+            "Bundled dependency: akiver/cs-demo-analyzer, MIT licensed. "
+            "The bundled license text is available below."
+        )
+        dependency.setWordWrap(True)
+        dependency.setObjectName("muted")
+        layout.addWidget(dependency)
+
+        license_button = self._button("Show cs-demo-analyzer license", self.show_csda_license)
+        layout.addWidget(license_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+        layout.addStretch()
+
     def _manual_row(self, parent: QtWidgets.QVBoxLayout, label_text: str) -> QtWidgets.QLineEdit:
         label = QtWidgets.QLabel(label_text)
         edit = QtWidgets.QLineEdit()
@@ -660,6 +699,38 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
             button.setObjectName("primaryButton")
         button.clicked.connect(callback)
         return button
+
+    @staticmethod
+    def bundled_resource_path(relative_path: str) -> Path:
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if bundle_root:
+            return Path(bundle_root) / relative_path
+        return Path(__file__).resolve().parent / relative_path
+
+    def open_url(self, url: str) -> None:
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+
+    def show_csda_license(self) -> None:
+        license_path = self.bundled_resource_path("vendor/cs-demo-analyzer/LICENSE.md")
+        try:
+            text = license_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            QtWidgets.QMessageBox.critical(self, APP_TITLE, f"Could not read license file:\n{exc}")
+            return
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("cs-demo-analyzer license")
+        dialog.resize(720, 520)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        viewer = QtWidgets.QPlainTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(text)
+        viewer.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
+        close_button = QtWidgets.QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(viewer)
+        layout.addWidget(close_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
+        dialog.exec()
 
     def show_parsed_details_enabled(self) -> bool:
         value = self.settings.value(SETTINGS_SHOW_DETAILS, False)
@@ -777,6 +848,14 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
                 background: transparent;
                 color: {theme.text};
                 spacing: 8px;
+            }}
+            QPlainTextEdit {{
+                background: {theme.input_readonly};
+                border: 1px solid {theme.border};
+                border-radius: 5px;
+                color: {theme.text};
+                font-family: {MONO_FONT_FAMILY};
+                padding: 6px;
             }}
             QProgressBar {{
                 background: {theme.input_bg};
