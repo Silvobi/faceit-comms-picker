@@ -1155,6 +1155,15 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
 
 
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--debug-demo":
+        path = Path(sys.argv[2])
+        result = DemoInspector.inspect(path)
+        rows = [("player_info", row) for row in result.player_rows]
+        groups = build_auto_team_groups(rows)
+        for team, indices, _players in groups:
+            print(f"{team}: {', '.join(map(str, indices))} -> {command_for_indices(indices)}")
+        return
+
     app = QtWidgets.QApplication(sys.argv)
     app.setFont(QtGui.QFont(UI_FONT_FAMILY, 10))
     window = ListenVoiceApp()
