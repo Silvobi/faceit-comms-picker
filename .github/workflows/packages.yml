@@ -1,0 +1,95 @@
+name: Standalone packages
+
+on:
+  push:
+    branches: [main, 'release/**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows-x64
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-render-util0 squashfs-tools desktop-file-utils xvfb fonts-dejavu-core
+      - name: Python dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: GUI regression tests
+        run: python -m unittest -v test_lvig
+      - name: Build standalone packages
+        run: python packaging/build.py
+      - name: Verify Windows installer and portable ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/verify_windows.ps1
+      - name: Verify AppImage on X11 using the bundled runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          desktop-file-validate packaging/faceit-comms-picker.desktop
+          image=$(find "$PWD/dist/packages" -name '*.AppImage' -print -quit)
+          mkdir -p "$RUNNER_TEMP/appimage-check"
+          cd "$RUNNER_TEMP/appimage-check"
+          "$image" --appimage-extract >/dev/null
+          xvfb-run -a env -u QT_QPA_PLATFORM PATH=/usr/bin:/bin ./squashfs-root/AppRun --smoke-test "$PWD/smoke-linux.json"
+          python -c 'import json; d=json.load(open("smoke-linux.json")); assert d["frozen"] and d["parser_help"]; print(d)'
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: FACEIT-Comms-Picker-${{ matrix.platform }}
+          path: dist/packages/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload smoke reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: smoke-${{ matrix.platform }}
+          path: |
+            build/packaging/smoke-*
+            ${{ runner.temp }}/faceit-comms-picker-check/*-smoke.*
+            ${{ runner.temp }}/appimage-check/smoke-linux.*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: FACEIT-Comms-Picker-*
+          merge-multiple: true
+          path: packages
+      - name: Publish versioned packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; preserving its published packages."
+          else
+            gh release create "$RELEASE_TAG" packages/* --verify-tag --title "FACEIT Comms Picker $RELEASE_TAG" --generate-notes --prerelease
+          fi

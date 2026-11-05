@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=FACEIT Comms Picker
+Comment=Select voice communication from FACEIT CS2 demos
+Exec=FACEIT-Comms-Picker %F
+Icon=faceit-comms-picker
+Terminal=false
+Categories=Game;Utility;

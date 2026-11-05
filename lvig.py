@@ -14,12 +14,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 
 APP_TITLE = "FACEIT Comms Picker"
-APP_VERSION = "v0.1.0-poc"
+APP_VERSION = "v0.2.0-poc"
 PROJECT_URL = "https://github.com/Silvobi/faceit-comms-picker"
 CSDA_URL = "https://github.com/akiver/cs-demo-analyzer"
-UI_FONT_FAMILY = "Helvetica"
-UI_FONT_FALLBACK = "Segoe UI"
-MONO_FONT_FAMILY = "Consolas"
+UI_FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
+UI_FONT_FALLBACK = "Arial"
+MONO_FONT_FAMILY = "Consolas" if sys.platform == "win32" else "DejaVu Sans Mono"
 SETTINGS_ORG = "FaceitCommsPicker"
 SETTINGS_APP = "FaceitCommsPicker"
 SETTINGS_DEMO_FOLDER = "demoFolder"
@@ -214,23 +214,24 @@ class DemoInspector:
     @staticmethod
     def resolve_csda() -> Path:
         candidates: list[Path] = []
+        binary_name = "csda.exe" if sys.platform == "win32" else "csda"
 
         bundle_root = getattr(sys, "_MEIPASS", None)
         if bundle_root:
-            candidates.append(Path(bundle_root) / "vendor" / "cs-demo-analyzer" / "csda.exe")
+            candidates.append(Path(bundle_root) / "vendor" / "cs-demo-analyzer" / binary_name)
 
         env_path = os.environ.get("CSDA_EXE")
         if env_path:
             candidates.append(Path(env_path))
 
-        for name in ("csda.exe", "csda"):
+        for name in (binary_name,):
             found = shutil.which(name)
             if found:
                 candidates.append(Path(found))
 
         root = Path(__file__).resolve().parent
-        candidates.append(root / "vendor" / "cs-demo-analyzer" / "csda.exe")
-        candidates.extend(root.glob("**/csda.exe"))
+        candidates.append(root / "vendor" / "cs-demo-analyzer" / binary_name)
+        candidates.extend(root.glob(f"**/{binary_name}"))
 
         candidates.append(
             Path(tempfile.gettempdir())
@@ -245,12 +246,12 @@ class DemoInspector:
         )
 
         for candidate in candidates:
-            if candidate.is_file():
+            if candidate.is_file() and (sys.platform == "win32" or os.access(candidate, os.X_OK)):
                 return candidate.resolve()
 
         raise FileNotFoundError(
-            "Could not find csda.exe. Set CSDA_EXE to the cs-demo-analyzer binary, "
-            "put csda.exe next to this app, or install @akiver/cs-demo-analyzer locally."
+            f"Could not find {binary_name}. Set CSDA_EXE to the native cs-demo-analyzer binary "
+            f"or place it in vendor/cs-demo-analyzer/{binary_name}."
         )
 
     @staticmethod
@@ -263,7 +264,10 @@ class DemoInspector:
             f"-source={DemoInspector.DEFAULT_SOURCE}",
             "-minify",
         ]
-        completed = subprocess.run(args, capture_output=True, text=True, check=False)
+        completed = subprocess.run(
+            args, capture_output=True, text=True, check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
         if completed.returncode != 0:
             details = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
             raise RuntimeError(f"cs-demo-analyzer failed with exit code {completed.returncode}:\n{details}")
@@ -372,29 +376,66 @@ class ParserWorker(QtCore.QThread):
             self.failed.emit(str(exc), False)
 
 
+class FullWidthTabBar(QtWidgets.QTabBar):
+    def tabSizeHint(self, index: int) -> QtCore.QSize:
+        size = super().tabSizeHint(index)
+        size.setWidth(max(1, self.width() // max(1, self.count())))
+        return size
+
+
+class FullWidthTabs(QtWidgets.QTabWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setTabBar(FullWidthTabBar())
+        self.tabBar().setExpanding(True)
+        self.setDocumentMode(True)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        self.tabBar().setFixedWidth(self.contentsRect().width())
+        super().resizeEvent(event)
+
+
 class DropArea(QtWidgets.QFrame):
     path_dropped = QtCore.Signal(Path)
+    clicked = QtCore.Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Choose a demo file")
+        self.setToolTip("Click to choose a .dem file, or drop a demo here.")
         self.setObjectName("dropArea")
         self.setProperty("state", "idle")
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(6)
 
-        icon = QtWidgets.QLabel("[.dem]")
+        icon = QtWidgets.QLabel(".DEM")
         icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         icon.setObjectName("dropIcon")
-        self.label = QtWidgets.QLabel("Drop a demo folder here or click to choose one")
+        self.label = QtWidgets.QLabel("Drop a demo here or click to choose a .dem file")
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.label.setWordWrap(True)
         self.label.setObjectName("dropLabel")
 
         layout.addWidget(icon)
         layout.addWidget(self.label)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter, QtCore.Qt.Key.Key_Space):
+            self.clicked.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def set_state(self, state: str, text: str | None = None) -> None:
         self.setProperty("state", state)
@@ -468,9 +509,13 @@ class CommandCard(QtWidgets.QFrame):
 
 
 class ListenVoiceApp(QtWidgets.QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, settings: QtCore.QSettings | None = None) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
+        icon = self.bundled_resource_path("assets/faceit-comms-picker.png")
+        if not icon.is_file():
+            icon = self.bundled_resource_path("assets/faceit-comms-picker.svg")
+        self.setWindowIcon(QtGui.QIcon(str(icon)))
         self.resize(1120, 760)
         self.setMinimumSize(920, 640)
 
@@ -480,9 +525,8 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.rows: list[tuple[str, dict[str, Any]]] = []
         self.auto_team_groups: list[tuple[str, list[int], list[str]]] = []
         self.spec_player_names: dict[int, str] = {}
-        self.raw_commands: list[str] = []
         self.worker: ParserWorker | None = None
-        self.settings = QtCore.QSettings(SETTINGS_ORG, SETTINGS_APP)
+        self.settings = settings if settings is not None else application_settings()
         self.theme_mode = self.settings.value(SETTINGS_THEME_MODE, "system", str)
         if self.theme_mode not in {"system", "light", "dark"}:
             self.theme_mode = "system"
@@ -496,70 +540,73 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         root = QtWidgets.QVBoxLayout(central)
-        root.setContentsMargins(16, 16, 16, 12)
+        root.setContentsMargins(24, 20, 24, 16)
         root.setSpacing(12)
 
         title = QtWidgets.QLabel(APP_TITLE)
         title.setObjectName("title")
         subtitle = QtWidgets.QLabel("Generate ready-to-paste CS2 voice commands for FACEIT demos.")
         subtitle.setObjectName("muted")
-        root.addWidget(title)
-        root.addWidget(subtitle)
+        heading = QtWidgets.QVBoxLayout()
+        heading.setSpacing(3)
+        heading.addWidget(title)
+        heading.addWidget(subtitle)
+        root.addLayout(heading)
 
-        self.drop_area = DropArea()
-        self.drop_area.mousePressEvent = lambda _event: self.choose_demo_folder()  # type: ignore[method-assign]
-        self.drop_area.path_dropped.connect(self.handle_dropped_path)
-        root.addWidget(self.drop_area)
-
-        self.progress_bar = QtWidgets.QProgressBar()
-        self.progress_bar.setRange(0, 0)
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.hide()
-        root.addWidget(self.progress_bar)
-
-        picker = QtWidgets.QHBoxLayout()
-        self.folder_display = QtWidgets.QLineEdit()
-        self.folder_display.setReadOnly(True)
-        self.folder_display.setPlaceholderText("No demo folder selected")
-        choose_folder_button = QtWidgets.QPushButton("Choose folder")
-        choose_folder_button.setObjectName("primaryButton")
-        choose_folder_button.clicked.connect(self.choose_demo_folder)
-        refresh_button = QtWidgets.QPushButton("Refresh")
-        refresh_button.clicked.connect(self.refresh_demo_list)
-        picker.addWidget(self.folder_display, stretch=1)
-        picker.addWidget(choose_folder_button)
-        picker.addWidget(refresh_button)
-        root.addLayout(picker)
-
-        self.demo_list = QtWidgets.QComboBox()
-        self.demo_list.setPlaceholderText("Select a demo")
-        self.demo_list.activated.connect(self.load_selected_demo)
-        root.addWidget(self.demo_list)
-
-        self.tabs = QtWidgets.QTabWidget()
+        self.tabs = FullWidthTabs()
         root.addWidget(self.tabs, stretch=1)
 
         self.main_tab = QtWidgets.QWidget()
-        self.manual_tab = QtWidgets.QWidget()
+        self.raw_tab = QtWidgets.QWidget()
         self.settings_tab = QtWidgets.QWidget()
         self.about_tab = QtWidgets.QWidget()
         self.tabs.addTab(self.main_tab, "Commands")
-        self.tabs.addTab(self.manual_tab, "Manual correction")
+        self.tabs.addTab(self.raw_tab, "Raw Convertion")
         self.tabs.addTab(self.settings_tab, "Settings")
         self.tabs.addTab(self.about_tab, "About")
         self._build_main_tab()
-        self._build_manual_tab()
+        self._build_raw_tab()
         self._build_settings_tab()
         self._build_about_tab()
 
         self.status = QtWidgets.QLabel("Ready.")
         self.status.setObjectName("muted")
+        self.status.setWordWrap(True)
         root.addWidget(self.status)
 
     def _build_main_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.main_tab)
         layout.setContentsMargins(0, 12, 0, 0)
         layout.setSpacing(12)
+
+        self.drop_area = DropArea()
+        self.drop_area.clicked.connect(self.choose_demo_file)
+        self.drop_area.path_dropped.connect(self.handle_dropped_path)
+        layout.addWidget(self.drop_area)
+
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        picker = QtWidgets.QHBoxLayout()
+        self.folder_display = QtWidgets.QLineEdit()
+        self.folder_display.setReadOnly(True)
+        self.folder_display.setPlaceholderText("No demo folder selected")
+        choose_folder_button = QtWidgets.QPushButton("Choose folder")
+        choose_folder_button.clicked.connect(self.choose_demo_folder)
+        refresh_button = QtWidgets.QPushButton("Refresh")
+        refresh_button.clicked.connect(self.refresh_demo_list)
+        picker.addWidget(self.folder_display, stretch=1)
+        picker.addWidget(choose_folder_button)
+        picker.addWidget(refresh_button)
+        layout.addLayout(picker)
+
+        self.demo_list = QtWidgets.QComboBox()
+        self.demo_list.setPlaceholderText("Select a demo")
+        self.demo_list.activated.connect(self.load_selected_demo)
+        layout.addWidget(self.demo_list)
 
         cards = QtWidgets.QHBoxLayout()
         cards.setSpacing(12)
@@ -591,6 +638,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
@@ -601,33 +649,130 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         details_layout.addWidget(self.table, stretch=1)
         layout.addWidget(self.details_panel, stretch=1)
 
-    def _build_manual_tab(self) -> None:
-        layout = QtWidgets.QVBoxLayout(self.manual_tab)
-        layout.setContentsMargins(0, 12, 0, 0)
-        layout.setSpacing(10)
+    def _build_raw_tab(self) -> None:
+        tab_layout = QtWidgets.QVBoxLayout(self.raw_tab)
+        tab_layout.setContentsMargins(0, 12, 0, 0)
+        self.raw_scroll = QtWidgets.QScrollArea()
+        self.raw_scroll.setWidgetResizable(True)
+        self.raw_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.raw_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QtWidgets.QWidget()
+        self.raw_scroll.setWidget(content)
+        tab_layout.addWidget(self.raw_scroll)
+        layout = QtWidgets.QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
-        self.manual_team_a = self._manual_row(layout, "Team A indices")
-        self.manual_team_b = self._manual_row(layout, "Team B indices")
-        self.manual_custom = self._manual_row(layout, "Custom indices")
+        card = QtWidgets.QFrame()
+        card.setObjectName("card")
+        form = QtWidgets.QVBoxLayout(card)
+        form.setContentsMargins(20, 18, 20, 18)
+        form.setSpacing(12)
+        title = QtWidgets.QLabel("Convert player slots to a voice command")
+        title.setObjectName("sectionTitle")
+        form.addWidget(title)
+        description = QtWidgets.QLabel(
+            "Enter up to five spec_player slots (1-32). Use the mouse wheel or arrows to change a value. "
+            "Unused fields are skipped; repeated slots count once. No demo file is required."
+        )
+        description.setObjectName("muted")
+        description.setWordWrap(True)
+        form.addWidget(description)
 
-        selected_buttons = QtWidgets.QHBoxLayout()
-        selected_buttons.addWidget(self._button("Add selected to Team A", lambda: self.add_selected_to(self.manual_team_a)))
-        selected_buttons.addWidget(self._button("Add selected to Team B", lambda: self.add_selected_to(self.manual_team_b)))
-        selected_buttons.addWidget(self._button("Add selected to Custom", lambda: self.add_selected_to(self.manual_custom)))
-        selected_buttons.addStretch()
-        layout.addLayout(selected_buttons)
+        slots = QtWidgets.QHBoxLayout()
+        slots.setSpacing(12)
+        self.raw_slots: list[QtWidgets.QSpinBox] = []
+        for position in range(1, 6):
+            column = QtWidgets.QVBoxLayout()
+            label = QtWidgets.QLabel(f"Player {position}")
+            spin = QtWidgets.QSpinBox()
+            spin.setRange(0, 32)
+            spin.setSpecialValueText("—")
+            spin.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            spin.setMinimumHeight(42)
+            spin.setAccessibleName(f"Player {position} slot")
+            spin.setToolTip("spec_player slot: 1-32. The dash means unused.")
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(self.invalidate_raw_command)
+            spin.lineEdit().textEdited.connect(self.invalidate_raw_command)
+            label.setBuddy(spin)
+            column.addWidget(label)
+            column.addWidget(spin)
+            slots.addLayout(column, stretch=1)
+            self.raw_slots.append(spin)
+        form.addLayout(slots)
 
-        action_buttons = QtWidgets.QHBoxLayout()
-        action_buttons.addWidget(self._button("Generate", self.generate_commands, primary=True))
-        action_buttons.addWidget(self._button("Copy all commands", self.copy_all_commands))
-        action_buttons.addWidget(self._button("Clear manual fields", self.clear_manual_fields))
-        action_buttons.addStretch()
-        layout.addLayout(action_buttons)
+        actions = QtWidgets.QHBoxLayout()
+        actions.addWidget(self._button("Convert to command", self.generate_raw_command, primary=True))
+        actions.addWidget(self._button("Clear", self.clear_raw_fields))
+        actions.addStretch()
+        form.addLayout(actions)
 
-        note = QtWidgets.QLabel("Manual entries accept comma/space-separated values and ranges, e.g. 1, 2, 5-7.")
-        note.setObjectName("muted")
-        layout.addWidget(note)
+        self.raw_feedback = QtWidgets.QLabel("Enter at least one player slot.")
+        self.raw_feedback.setObjectName("muted")
+        self.raw_feedback.setWordWrap(True)
+        form.addWidget(self.raw_feedback)
+        result = QtWidgets.QHBoxLayout()
+        self.raw_command = QtWidgets.QLineEdit()
+        self.raw_command.setObjectName("commandField")
+        self.raw_command.setReadOnly(True)
+        self.raw_command.setPlaceholderText("Your tv_listen_voice_indices command will appear here")
+        self.raw_copy_button = self._button("Copy command", self.copy_raw_command)
+        self.raw_copy_button.setEnabled(False)
+        result.addWidget(self.raw_command, stretch=1)
+        result.addWidget(self.raw_copy_button)
+        form.addLayout(result)
+        layout.addWidget(card)
+
+        guide = QtWidgets.QFrame()
+        guide.setObjectName("card")
+        guide_layout = QtWidgets.QVBoxLayout(guide)
+        guide_layout.setContentsMargins(20, 16, 20, 16)
+        guide_title = QtWidgets.QLabel("How to find the slots with spec_player")
+        guide_title.setObjectName("sectionTitle")
+        guide_layout.addWidget(guide_title)
+        instructions = QtWidgets.QLabel(
+            "1. Open your FACEIT demo in CS2 and open the developer console.<br>"
+            "2. Enter <code>spec_player 1</code>, then try <code>spec_player 2</code>, "
+            "<code>spec_player 3</code>, and so on. Check which player each number selects.<br>"
+            "3. Enter the numbers that select the players you want to hear into the five fields above. "
+            "Use the exact numbers from <code>spec_player x</code>; no subtraction is needed.<br>"
+            "4. Click <b>Convert to command</b>, copy the result, and paste it into the CS2 console "
+            "while playing that demo."
+        )
+        instructions.setWordWrap(True)
+        instructions.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        guide_layout.addWidget(instructions)
+        layout.addWidget(guide)
         layout.addStretch()
+
+    def invalidate_raw_command(self, *_args: object) -> None:
+        self.raw_command.clear()
+        self.raw_copy_button.setEnabled(False)
+        self.raw_feedback.setText("Enter at least one player slot, then click Convert to command.")
+
+    def generate_raw_command(self) -> None:
+        for spin in self.raw_slots:
+            spin.interpretText()
+        indices = sorted({spin.value() for spin in self.raw_slots if spin.value() > 0})
+        if not indices:
+            self.invalidate_raw_command()
+            return
+        self.raw_command.setText(command_for_indices(indices))
+        self.raw_copy_button.setEnabled(True)
+        self.raw_feedback.setText("Converted slots: " + ", ".join(map(str, indices)))
+
+    def copy_raw_command(self) -> None:
+        self.generate_raw_command()
+        if self.raw_command.text():
+            QtWidgets.QApplication.clipboard().setText(self.raw_command.text())
+            self.raw_feedback.setText("Command copied. Paste it into the CS2 console while playing your demo.")
+
+    def clear_raw_fields(self) -> None:
+        for spin in self.raw_slots:
+            spin.setValue(0)
+        self.invalidate_raw_command()
+        self.raw_slots[0].setFocus()
 
     def _build_settings_tab(self) -> None:
         layout = QtWidgets.QVBoxLayout(self.settings_tab)
@@ -663,7 +808,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         layout.addWidget(title)
 
         description = QtWidgets.QLabel(
-            "Proof-of-concept Windows tool for generating ready-to-paste CS2 FACEIT demo voice commands."
+            "Generate ready-to-paste CS2 FACEIT demo voice commands on Windows and Linux."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -685,13 +830,6 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         license_button = self._button("Show cs-demo-analyzer license", self.show_csda_license)
         layout.addWidget(license_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
         layout.addStretch()
-
-    def _manual_row(self, parent: QtWidgets.QVBoxLayout, label_text: str) -> QtWidgets.QLineEdit:
-        label = QtWidgets.QLabel(label_text)
-        edit = QtWidgets.QLineEdit()
-        parent.addWidget(label)
-        parent.addWidget(edit)
-        return edit
 
     def _button(self, text: str, callback: Any, primary: bool = False) -> QtWidgets.QPushButton:
         button = QtWidgets.QPushButton(text)
@@ -789,7 +927,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
             }}
             QFrame#dropArea[state="idle"] {{
                 background: {theme.drop_idle_bg};
-                border: 2px solid {theme.drop_idle_border};
+                border: 2px dashed {theme.drop_idle_border};
             }}
             QFrame#dropArea[state="parsing"] {{
                 background: {theme.drop_parsing_bg};
@@ -803,6 +941,9 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
                 background: {theme.drop_error_bg};
                 border: 2px solid {theme.drop_error_border};
             }}
+            QFrame#dropArea:hover, QFrame#dropArea:focus {{
+                border-color: {theme.accent};
+            }}
             QLabel#dropIcon {{
                 color: {theme.accent};
                 font-weight: 700;
@@ -815,6 +956,21 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
                 background: {theme.card};
                 border: 1px solid {theme.border};
                 border-radius: 8px;
+            }}
+            QSpinBox {{
+                background: {theme.input_bg};
+                border: 1px solid {theme.border};
+                border-radius: 6px;
+                color: {theme.text};
+                padding: 4px 24px 4px 8px;
+                font-family: {MONO_FONT_FAMILY};
+                font-size: 14pt;
+            }}
+            QSpinBox:focus, QLineEdit:focus {{
+                border-color: {theme.accent};
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                width: 22px;
             }}
             QLineEdit {{
                 background: {theme.input_bg};
@@ -875,6 +1031,10 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
                 color: {theme.text};
                 padding: 7px 12px;
             }}
+            QPushButton:disabled {{
+                color: {theme.muted};
+                background: {theme.tab};
+            }}
             QPushButton:hover {{
                 border-color: {theme.accent};
             }}
@@ -906,16 +1066,25 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
             QTabWidget::pane {{
                 border: 0;
             }}
+            QScrollArea, QScrollArea > QWidget > QWidget {{
+                background: transparent;
+            }}
             QTabBar::tab {{
                 background: {theme.tab};
-                border: 1px solid {theme.border};
-                color: {theme.text};
-                padding: 8px 14px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                border: 0;
+                border-bottom: 3px solid {theme.border};
+                color: {theme.muted};
+                padding: 11px 14px;
+                font-weight: 600;
             }}
             QTabBar::tab:selected {{
                 background: {theme.card};
+                color: {theme.accent};
+                border-bottom-color: {theme.accent};
+            }}
+            QTabBar::tab:hover {{
+                background: {theme.card};
+                color: {theme.text};
             }}
             QScrollBar:vertical, QScrollBar:horizontal {{
                 background: {theme.bg};
@@ -927,8 +1096,18 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
             """
         )
 
+    def choose_demo_file(self) -> None:
+        file_name, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select FACEIT demo", str(self.demo_folder or ""), "CS2 demos (*.dem)"
+        )
+        if file_name:
+            path = Path(file_name)
+            self.load_demo_folder(path.parent, selected_demo=path)
+
     def choose_demo_folder(self) -> None:
-        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select FACEIT demo folder", "")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select FACEIT demo folder", str(self.demo_folder or "")
+        )
         if folder:
             self.load_demo_folder(Path(folder))
 
@@ -949,7 +1128,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.settings.setValue(SETTINGS_DEMO_FOLDER, str(folder))
         self.folder_display.setText(str(folder))
         self.refresh_demo_list()
-        self.drop_area.set_state("idle", f"Loaded folder: {folder.name}")
+        self.drop_area.set_state("idle", "Drop a demo here or click to choose a .dem file")
 
         if selected_demo is not None:
             self.select_demo_in_list(selected_demo)
@@ -1056,7 +1235,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         dialog.setWindowTitle(APP_TITLE)
         dialog.setText(title)
         if missing_parser:
-            dialog.setInformativeText("Configure csda.exe, then try again.")
+            dialog.setInformativeText("Configure the native cs-demo-analyzer executable, then try again.")
         else:
             dialog.setInformativeText("This file could not be parsed as a FACEIT CS2 demo.")
         dialog.setDetailedText(message)
@@ -1101,8 +1280,6 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.team_b_card.title.setText(f"Team B ({second_team})")
         self.team_a_card.indices.setText(", ".join(map(str, first_indices)))
         self.team_b_card.indices.setText(", ".join(map(str, second_indices)))
-        self.manual_team_a.setText(", ".join(map(str, first_indices)))
-        self.manual_team_b.setText(", ".join(map(str, second_indices)))
         self.team_a_card.players.setText(self._format_player_list(first_indices, first_players))
         self.team_b_card.players.setText(self._format_player_list(second_indices, second_players))
         if update_status:
@@ -1137,59 +1314,16 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         )
 
     def generate_commands(self) -> None:
-        self.team_a_card.indices.setText(self.manual_team_a.text())
-        self.team_b_card.indices.setText(self.manual_team_b.text())
-        sections = [
-            ("Team A", self.team_a_card.indices.text(), self.team_a_card),
-            ("Team B", self.team_b_card.indices.text(), self.team_b_card),
-            ("Custom", self.manual_custom.text(), None),
-        ]
-        raw_commands: list[str] = []
-        self.team_a_card.command.clear()
-        self.team_b_card.command.clear()
-        try:
-            for title, text, card in sections:
-                indices = parse_index_text(text)
-                if not indices:
-                    continue
-                raw_command = command_for_indices(indices)
-                raw_commands.append(raw_command)
-                if card is not None:
-                    card.command.setText(raw_command)
-                elif title == "Custom":
-                    QtWidgets.QApplication.clipboard().setText(raw_command)
-                    self.status.setText("Generated and copied custom command.")
-        except ValueError as exc:
-            QtWidgets.QMessageBox.critical(self, APP_TITLE, str(exc))
-            return
-
-        self.raw_commands = raw_commands
+        for card in (self.team_a_card, self.team_b_card):
+            card.command.clear()
+            try:
+                indices = parse_index_text(card.indices.text())
+                if indices:
+                    command = command_for_indices(indices)
+                    card.command.setText(command)
+            except ValueError as exc:
+                self.status.setText(f"Could not generate a team command: {exc}")
         self.refresh_team_player_lists()
-        if raw_commands:
-            self.status.setText("Commands generated.")
-        else:
-            self.status.setText("Enter at least one index.")
-
-    def selected_indices(self) -> list[int]:
-        indices: set[int] = set()
-        for item in self.table.selectedItems():
-            value = item.data(QtCore.Qt.ItemDataRole.UserRole)
-            if isinstance(value, int) and value > 0:
-                indices.add(value)
-        return sorted(indices)
-
-    def add_selected_to(self, edit: QtWidgets.QLineEdit) -> None:
-        selected = self.selected_indices()
-        if not selected:
-            self.status.setText("Select one or more rows in Parsed demo details first.")
-            return
-        try:
-            existing = parse_index_text(edit.text())
-        except ValueError as exc:
-            QtWidgets.QMessageBox.critical(self, APP_TITLE, f"Existing index field contains invalid text:\n{exc}")
-            return
-        edit.setText(", ".join(map(str, sorted(set(existing + selected)))))
-        self.status.setText(f"Added indices: {', '.join(map(str, selected))}.")
 
     def copy_command_text(self, title: str, command: str) -> None:
         command = command.strip()
@@ -1202,38 +1336,64 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         QtWidgets.QApplication.clipboard().setText(command)
         self.status.setText(f"Copied {title} command.")
 
-    def copy_all_commands(self) -> None:
-        if not self.raw_commands:
-            self.generate_commands()
-        if not self.raw_commands:
-            self.status.setText("Nothing to copy.")
-            return
-        QtWidgets.QApplication.clipboard().setText("\n".join(self.raw_commands))
-        self.status.setText(f"Copied {len(self.raw_commands)} command{'s' if len(self.raw_commands) != 1 else ''}.")
-
-    def clear_manual_fields(self) -> None:
-        self.manual_team_a.clear()
-        self.manual_team_b.clear()
-        self.manual_custom.clear()
-        self.team_a_card.command.clear()
-        self.team_b_card.command.clear()
-        self.raw_commands = []
-        self.status.setText("Manual fields cleared.")
-
     def clear_results(self) -> None:
         self.rows = []
         self.auto_team_groups = []
         self.spec_player_names = {}
-        self.raw_commands = []
         self.team_a_card.clear()
         self.team_b_card.clear()
-        self.manual_team_a.clear()
-        self.manual_team_b.clear()
-        self.manual_custom.clear()
         self.table.setRowCount(0)
 
 
+def application_settings() -> QtCore.QSettings:
+    root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    if (root / "portable.txt").is_file():
+        return QtCore.QSettings(str(root / "settings.ini"), QtCore.QSettings.Format.IniFormat)
+    return QtCore.QSettings(SETTINGS_ORG, SETTINGS_APP)
+
+
+def smoke_test(report_path: Path) -> None:
+    """Exercise the frozen GUI and its bundled parser without touching user settings."""
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    with tempfile.TemporaryDirectory(prefix="faceit-comms-picker-smoke-") as folder:
+        settings = QtCore.QSettings(str(Path(folder) / "settings.ini"), QtCore.QSettings.Format.IniFormat)
+        window = ListenVoiceApp(settings=settings)
+        window.show()
+        window.tabs.setCurrentWidget(window.raw_tab)
+        app.processEvents()
+        assert not window.windowIcon().isNull(), "Application icon missing"
+        for spin, value in zip(window.raw_slots, (1, 4, 5, 7, 8)):
+            spin.setValue(value)
+        window.generate_raw_command()
+        assert window.raw_command.text() == "tv_listen_voice_indices 217"
+        parser = DemoInspector.resolve_csda()
+        help_result = subprocess.run(
+            [str(parser), "-help"], capture_output=True, text=True, timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        assert help_result.returncode in (0, 2), help_result.stderr
+        assert "demo-path" in help_result.stdout + help_result.stderr
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        window.grab().save(str(report_path.with_suffix(".png")))
+        report_path.write_text(json.dumps({
+            "application": APP_TITLE, "version": APP_VERSION, "platform": sys.platform,
+            "frozen": bool(getattr(sys, "frozen", False)), "parser": str(parser),
+            "parser_help": True, "raw_command": window.raw_command.text(),
+        }, indent=2), encoding="utf-8")
+        window.close()
+
+
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        report_path = Path(sys.argv[2])
+        try:
+            smoke_test(report_path)
+        except Exception:
+            import traceback
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps({"error": traceback.format_exc()}, indent=2), encoding="utf-8")
+            raise SystemExit(1)
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "--debug-demo":
         path = Path(sys.argv[2])
         result = DemoInspector.inspect(path)

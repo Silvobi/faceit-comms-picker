@@ -12,7 +12,14 @@ settings-test/
 build/
 dist/
 *.spec
+!packaging/*.spec
+vendor/cs-demo-analyzer/csda
+assets/faceit-comms-picker.png
+assets/faceit-comms-picker.ico
+portable.txt
+settings.ini
 
 # Virtual environments.
 .venv/
+.venv-build/
 venv/
