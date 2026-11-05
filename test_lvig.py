@@ -158,6 +158,27 @@ class AppTests(unittest.TestCase):
         bottom = content.mapTo(viewport, content.rect().bottomLeft())
         self.assertLessEqual(bottom.y(), viewport.height())
 
+    def test_linux_bundle_selects_native_parser(self):
+        parser_dir = self.folder / "vendor/cs-demo-analyzer"
+        parser_dir.mkdir(parents=True)
+        native = parser_dir / "csda"
+        native.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        native.chmod(0o755)
+        (parser_dir / "csda.exe").write_bytes(b"Windows executable")
+        with patch.object(lvig.sys, "platform", "linux"), \
+             patch.object(lvig.sys, "_MEIPASS", str(self.folder), create=True):
+            self.assertEqual(lvig.DemoInspector.resolve_csda(), native.resolve())
+
+    def test_portable_bundle_uses_settings_next_to_executable(self):
+        with patch.object(lvig.sys, "frozen", True, create=True), \
+             patch.object(lvig.sys, "executable", str(self.folder / "FACEIT-Comms-Picker.exe")):
+            (self.folder / "portable.txt").touch()
+            settings = lvig.application_settings()
+            settings.setValue("themeMode", "dark")
+            settings.sync()
+            self.assertEqual(Path(settings.fileName()), self.folder / "settings.ini")
+            self.assertTrue((self.folder / "settings.ini").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

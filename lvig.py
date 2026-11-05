@@ -17,9 +17,9 @@ APP_TITLE = "FACEIT Comms Picker"
 APP_VERSION = "v0.2.0-poc"
 PROJECT_URL = "https://github.com/Silvobi/faceit-comms-picker"
 CSDA_URL = "https://github.com/akiver/cs-demo-analyzer"
-UI_FONT_FAMILY = "Segoe UI"
+UI_FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
 UI_FONT_FALLBACK = "Arial"
-MONO_FONT_FAMILY = "Consolas"
+MONO_FONT_FAMILY = "Consolas" if sys.platform == "win32" else "DejaVu Sans Mono"
 SETTINGS_ORG = "FaceitCommsPicker"
 SETTINGS_APP = "FaceitCommsPicker"
 SETTINGS_DEMO_FOLDER = "demoFolder"
@@ -214,23 +214,24 @@ class DemoInspector:
     @staticmethod
     def resolve_csda() -> Path:
         candidates: list[Path] = []
+        binary_name = "csda.exe" if sys.platform == "win32" else "csda"
 
         bundle_root = getattr(sys, "_MEIPASS", None)
         if bundle_root:
-            candidates.append(Path(bundle_root) / "vendor" / "cs-demo-analyzer" / "csda.exe")
+            candidates.append(Path(bundle_root) / "vendor" / "cs-demo-analyzer" / binary_name)
 
         env_path = os.environ.get("CSDA_EXE")
         if env_path:
             candidates.append(Path(env_path))
 
-        for name in ("csda.exe", "csda"):
+        for name in (binary_name,):
             found = shutil.which(name)
             if found:
                 candidates.append(Path(found))
 
         root = Path(__file__).resolve().parent
-        candidates.append(root / "vendor" / "cs-demo-analyzer" / "csda.exe")
-        candidates.extend(root.glob("**/csda.exe"))
+        candidates.append(root / "vendor" / "cs-demo-analyzer" / binary_name)
+        candidates.extend(root.glob(f"**/{binary_name}"))
 
         candidates.append(
             Path(tempfile.gettempdir())
@@ -245,12 +246,12 @@ class DemoInspector:
         )
 
         for candidate in candidates:
-            if candidate.is_file():
+            if candidate.is_file() and (sys.platform == "win32" or os.access(candidate, os.X_OK)):
                 return candidate.resolve()
 
         raise FileNotFoundError(
-            "Could not find csda.exe. Set CSDA_EXE to the cs-demo-analyzer binary, "
-            "put csda.exe next to this app, or install @akiver/cs-demo-analyzer locally."
+            f"Could not find {binary_name}. Set CSDA_EXE to the native cs-demo-analyzer binary "
+            f"or place it in vendor/cs-demo-analyzer/{binary_name}."
         )
 
     @staticmethod
@@ -263,7 +264,10 @@ class DemoInspector:
             f"-source={DemoInspector.DEFAULT_SOURCE}",
             "-minify",
         ]
-        completed = subprocess.run(args, capture_output=True, text=True, check=False)
+        completed = subprocess.run(
+            args, capture_output=True, text=True, check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
         if completed.returncode != 0:
             details = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
             raise RuntimeError(f"cs-demo-analyzer failed with exit code {completed.returncode}:\n{details}")
@@ -505,9 +509,13 @@ class CommandCard(QtWidgets.QFrame):
 
 
 class ListenVoiceApp(QtWidgets.QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, settings: QtCore.QSettings | None = None) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
+        icon = self.bundled_resource_path("assets/faceit-comms-picker.png")
+        if not icon.is_file():
+            icon = self.bundled_resource_path("assets/faceit-comms-picker.svg")
+        self.setWindowIcon(QtGui.QIcon(str(icon)))
         self.resize(1120, 760)
         self.setMinimumSize(920, 640)
 
@@ -518,7 +526,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.auto_team_groups: list[tuple[str, list[int], list[str]]] = []
         self.spec_player_names: dict[int, str] = {}
         self.worker: ParserWorker | None = None
-        self.settings = QtCore.QSettings(SETTINGS_ORG, SETTINGS_APP)
+        self.settings = settings if settings is not None else application_settings()
         self.theme_mode = self.settings.value(SETTINGS_THEME_MODE, "system", str)
         if self.theme_mode not in {"system", "light", "dark"}:
             self.theme_mode = "system"
@@ -800,7 +808,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         layout.addWidget(title)
 
         description = QtWidgets.QLabel(
-            "Proof-of-concept Windows tool for generating ready-to-paste CS2 FACEIT demo voice commands."
+            "Generate ready-to-paste CS2 FACEIT demo voice commands on Windows and Linux."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -1227,7 +1235,7 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         dialog.setWindowTitle(APP_TITLE)
         dialog.setText(title)
         if missing_parser:
-            dialog.setInformativeText("Configure csda.exe, then try again.")
+            dialog.setInformativeText("Configure the native cs-demo-analyzer executable, then try again.")
         else:
             dialog.setInformativeText("This file could not be parsed as a FACEIT CS2 demo.")
         dialog.setDetailedText(message)
@@ -1337,7 +1345,55 @@ class ListenVoiceApp(QtWidgets.QMainWindow):
         self.table.setRowCount(0)
 
 
+def application_settings() -> QtCore.QSettings:
+    root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    if (root / "portable.txt").is_file():
+        return QtCore.QSettings(str(root / "settings.ini"), QtCore.QSettings.Format.IniFormat)
+    return QtCore.QSettings(SETTINGS_ORG, SETTINGS_APP)
+
+
+def smoke_test(report_path: Path) -> None:
+    """Exercise the frozen GUI and its bundled parser without touching user settings."""
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    with tempfile.TemporaryDirectory(prefix="faceit-comms-picker-smoke-") as folder:
+        settings = QtCore.QSettings(str(Path(folder) / "settings.ini"), QtCore.QSettings.Format.IniFormat)
+        window = ListenVoiceApp(settings=settings)
+        window.show()
+        window.tabs.setCurrentWidget(window.raw_tab)
+        app.processEvents()
+        assert not window.windowIcon().isNull(), "Application icon missing"
+        for spin, value in zip(window.raw_slots, (1, 4, 5, 7, 8)):
+            spin.setValue(value)
+        window.generate_raw_command()
+        assert window.raw_command.text() == "tv_listen_voice_indices 217"
+        parser = DemoInspector.resolve_csda()
+        help_result = subprocess.run(
+            [str(parser), "-help"], capture_output=True, text=True, timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        assert help_result.returncode in (0, 2), help_result.stderr
+        assert "demo-path" in help_result.stdout + help_result.stderr
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        window.grab().save(str(report_path.with_suffix(".png")))
+        report_path.write_text(json.dumps({
+            "application": APP_TITLE, "version": APP_VERSION, "platform": sys.platform,
+            "frozen": bool(getattr(sys, "frozen", False)), "parser": str(parser),
+            "parser_help": True, "raw_command": window.raw_command.text(),
+        }, indent=2), encoding="utf-8")
+        window.close()
+
+
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        report_path = Path(sys.argv[2])
+        try:
+            smoke_test(report_path)
+        except Exception:
+            import traceback
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps({"error": traceback.format_exc()}, indent=2), encoding="utf-8")
+            raise SystemExit(1)
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "--debug-demo":
         path = Path(sys.argv[2])
         result = DemoInspector.inspect(path)
