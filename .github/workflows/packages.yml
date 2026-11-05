@@ -87,4 +87,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" packages/* --verify-tag --title "FACEIT Comms Picker $RELEASE_TAG" --generate-notes --prerelease
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; preserving its published packages."
+          else
+            gh release create "$RELEASE_TAG" packages/* --verify-tag --title "FACEIT Comms Picker $RELEASE_TAG" --generate-notes --prerelease
+          fi
