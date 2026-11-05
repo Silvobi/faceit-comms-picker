@@ -1,96 +1,108 @@
-# FACEIT Comms Picker
+# FACEIT Comms Picker (LVIG)
 
-Small Python GUI for generating `tv_listen_voice_indices` commands for CS2 demo voice playback.
+LVIG generates `tv_listen_voice_indices` console commands for listening to selected players in FACEIT CS2 demos. Load a demo to get commands for both teams, or enter player slots yourself in **Raw Convertion**.
 
-This proof-of-concept build is Windows-only.
+Current source version: **v0.2.0-poc**. This is a Windows proof of concept designed for FACEIT demos with recorded voice communication. Other demo sources are not verified.
 
-This script fixes the problem of having to go through a lot of somewhat complicated steps just to be able to listen to selected team in FaceIT demo. The program parses demo, gets `spec_player` slots, uses numbers of these slots to convert from binary to decimal and uses the number in `tv_listen_voice_indices` command.
--# This program was designed only for faceit demos - might not work on different demos with saved voice comms. Also it's more like proof-or-concept rather than fully funcionable program. And of course yes - it was vibe-coded
+## Run on Windows
 
-## Run
+### From source
 
-Install dependencies:
-
-```powershell
-py -m pip install -r requirements.txt
-```
-
-The parser backend is `cs-demo-analyzer`. The app auto-detects `csda.exe` from:
-
-- `CSDA_EXE`
-- `PATH`
-- `vendor/cs-demo-analyzer/csda.exe`
-- a `csda.exe` somewhere inside this project folder
-- the previous local npm test install under `%TEMP%\csda-npm-test`
-
-Packaged builds include the Windows `csda.exe` binary from `akiver/cs-demo-analyzer`.
-
-Launch:
+Install [Python](https://www.python.org/downloads/windows/) and [Git](https://git-scm.com/downloads/win), then run:
 
 ```powershell
-py lvig.py
+git clone https://github.com/Silvobi/faceit-comms-picker.git
+cd faceit-comms-picker
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe lvig.py
 ```
 
-## Current workflow
+The application is tested with Python 3.14 and PySide6. The repository includes the Windows `cs-demo-analyzer` executable under `vendor/cs-demo-analyzer/`; a separate Node.js or Go installation is not needed.
 
-1. Choose or drop the folder where your FACEIT `.dem` files are stored.
-2. Pick a demo from the detected demo list.
-3. The app parses the demo automatically.
-4. It exports `cs-demo-analyzer` JSON.
-5. It maps each player with `spec_player slot = userId + 1`.
-6. It generates separate commands for Team A and Team B on the **Commands** tab.
-7. Press **Copy command** under either team and paste into the CS2 console.
+### Packaged builds
 
-The tool uses CS2's one-based slot mapping where slot `1` sets bit `0`, slot `2` sets bit `1`, and so on.
+Available Windows builds are listed on the [Releases page](https://github.com/Silvobi/faceit-comms-picker/releases). Download the Windows ZIP for the release you want, extract it, and run `FACEIT-Comms-Picker.exe`. Packaged builds include Python, Qt, and the demo parser, so users do not need to install Python or dependencies.
 
-## Manual correction
+Release downloads have their own version numbers. Use the source instructions above to run the version documented on this branch.
 
-If a demo parses oddly, use the **Manual correction** tab:
+## Generate team commands from a demo
 
-- Select player rows in the parsed details table.
-- Press **Add selected to Team A**, **Add selected to Team B**, or **Add selected to Custom**.
-- Press **Generate** to refresh commands.
+1. Open the **Commands** tab.
+2. Click the drop area and choose a `.dem` file, or drag a demo onto it. The application starts parsing that file automatically.
+3. To browse several demos, click **Choose folder**, select their folder, and choose a demo from the list. **Refresh** rescans the folder.
+4. Check the player lists shown under **Team A** and **Team B**.
+5. Click **Copy command** for the team you want to hear.
+6. Open the same demo in CS2 and paste the copied command into the developer console.
 
-Drag-and-drop accepts either a folder or a `.dem` file. Dropping a `.dem` file loads its parent folder and selects that demo.
+You can also drop a folder onto the drop area. Choosing or dropping a demo loads its parent folder into the demo list. The application remembers the last selected folder.
 
-## Settings
+**Team A** and **Team B** follow the parser's grouping order; they do not necessarily match FACEIT's team labels. Use the displayed player names to identify the team you want.
 
-The **Settings** tab includes:
+The drop area indicates parsing status: gray while idle, yellow while parsing, green after success, and red if parsing fails. If parsing fails or a player is assigned incorrectly, use **Raw Convertion** with slots checked in CS2.
 
-- Theme: `System`, `Light`, or `Dark` (`System` by default)
-- Show parsed demo details: off by default
+## Convert slots with Raw Convertion
 
-## About and licenses
+This tab works without loading a demo into LVIG or running the parser.
 
-The **About** tab links to this project and `akiver/cs-demo-analyzer`.
+1. Open your FACEIT demo in CS2 and open the developer console.
+2. Enter `spec_player 1`, then try `spec_player 2`, `spec_player 3`, and so on. Check which player each number selects.
+3. Enter the exact numbers that select the players you want to hear into the five numeric fields. Slots range from **1 to 32**; type a number, use the arrows, or scroll the mouse wheel over a field.
+4. Leave unused fields at **—**. You can convert fewer than five players, and repeated slots count once.
+5. Click **Convert to command**, then **Copy command**.
+6. Paste the command into the CS2 developer console while playing that demo.
 
-Packaged builds bundle the Windows `csda.exe` binary from `akiver/cs-demo-analyzer`, which is MIT licensed. The bundled license text is available in the app and in release ZIPs under `licenses/`.
+Example:
 
-The drop area shows parser state:
+```text
+Player slots: 1, 4, 5, 7, 8
+Command:     tv_listen_voice_indices 217
+```
 
-- Gray: waiting for a demo
-- Yellow/orange: parsing
-- Green: parsed successfully
-- Red: parsing failed
+Use the numbers from `spec_player x` directly; do not subtract one yourself. Editing a field clears the previous result until you convert again. **Clear** resets the five fields and their result. Raw conversions do not change the team commands on the **Commands** tab.
 
-## Debugging
+## Settings and About
 
-To print every intermediate mapping for a demo:
+- **Theme:** follow the system appearance or select Light or Dark.
+- **Show parsed demo details:** display player slots, names, Steam IDs, teams, user IDs, and parser data on the **Commands** tab. This is off by default.
+- **Auto-fill teams:** regenerate the team cards from the parsed data when the details panel is visible.
+- **About:** view the application version, project links, and the bundled parser's license.
+
+The tabs fill the window width. The raw converter can scroll vertically when the window is too small to show its instructions at once.
+
+## Parser configuration
+
+LVIG uses [akiver/cs-demo-analyzer](https://github.com/akiver/cs-demo-analyzer) to export player data from a demo. It maps each player's `userId + 1` to the slot used by `spec_player` and combines selected slots into a 32-bit voice mask. Slot 1 sets bit 0; slot 32 sets bit 31. A negative command value is valid when the signed mask includes slot 32.
+
+The bundled parser is normally found automatically. To use another executable, set `CSDA_EXE` before starting the application:
 
 ```powershell
-py debug_demo.py "C:\path\to\demo.dem"
+$env:CSDA_EXE = 'C:\tools\cs-demo-analyzer\csda.exe'
+.\.venv\Scripts\python.exe lvig.py
 ```
 
-This shows:
+For source runs, the application also searches `PATH` and the project directory. Packaged Windows builds check their bundled parser first. The parser's MIT license is included at [`vendor/cs-demo-analyzer/LICENSE.md`](vendor/cs-demo-analyzer/LICENSE.md).
 
-- detected `spec_player` slots from `cs-demo-analyzer`
-- player rows and teams used for grouping
-- final team indices and commands
+## Tests and diagnostics
 
-To test the `cs-demo-analyzer` proof-of-concept backend without changing the GUI:
+Run the GUI regression tests with isolated settings and offscreen rendering:
 
 ```powershell
-py csda_poc.py --compare-current "C:\path\to\demo.dem"
+.\.venv\Scripts\python.exe -m unittest -v test_lvig
 ```
 
-The proof script runs `csda.exe`, exports minified JSON, maps `slot = userId + 1`, groups by team, and prints the generated `tv_listen_voice_indices` commands.
+Print the parsed player data, detected slots, team grouping, and generated commands for a demo:
+
+```powershell
+.\.venv\Scripts\python.exe debug_demo.py 'C:\path\to\demo.dem'
+```
+
+For just the team commands:
+
+```powershell
+.\.venv\Scripts\python.exe lvig.py --debug-demo 'C:\path\to\demo.dem'
+```
+
+## Platform support
+
+Windows is the supported platform for this proof of concept. The repository bundles a Windows parser executable and does not currently provide a Windows installer or a tested Linux package.
