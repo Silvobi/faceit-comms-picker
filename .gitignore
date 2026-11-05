@@ -21,4 +21,5 @@ settings.ini
 
 # Virtual environments.
 .venv/
+.venv-build/
 venv/

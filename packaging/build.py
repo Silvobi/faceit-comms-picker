@@ -84,6 +84,14 @@ def add_notices(bundle: Path) -> None:
     notices = bundle / "licenses"
     notices.mkdir(exist_ok=True)
     shutil.copy2(ROOT / "vendor/cs-demo-analyzer/LICENSE.md", notices / "cs-demo-analyzer-MIT.md")
+    for name, digest in {
+        "LGPL-3.0-only.txt": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+        "GPL-3.0-only.txt": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    }.items():
+        download(f"https://raw.githubusercontent.com/qt/qtbase/v6.11.1/LICENSES/{name}", notices / name, digest)
+    python_license = Path(sys.base_prefix) / "LICENSE.txt"
+    if python_license.is_file():
+        shutil.copy2(python_license, notices / "Python-LICENSE.txt")
     for package in ("PySide6", "PySide6_Essentials", "shiboken6"):
         dist = importlib.metadata.distribution(package)
         for item in dist.files or []:
@@ -97,6 +105,14 @@ def add_notices(bundle: Path) -> None:
         f"PySide6 / Qt {importlib.metadata.version('PySide6')} — https://www.qt.io/qt-for-python\n"
         f"cs-demo-analyzer {CSDA_REVISION} — https://github.com/akiver/cs-demo-analyzer\n"
         "Python/Qt shared libraries are shipped alongside the executable in _internal.\n",
+        encoding="utf-8",
+    )
+    (notices / "QT-SOURCES.txt").write_text(
+        "Qt / PySide6 6.11.1 source code and license information:\n"
+        "https://code.qt.io/cgit/qt/qtbase.git/tree/?h=v6.11.1\n"
+        "https://code.qt.io/cgit/pyside/pyside-setup.git/tree/?h=v6.11.1\n"
+        "https://doc.qt.io/qt-6/licenses-used-in-qt.html\n"
+        "Qt and PySide6 shared libraries in _internal can be replaced with compatible builds.\n",
         encoding="utf-8",
     )
     shutil.copy2(ROOT / "README.md", bundle / "README.md")

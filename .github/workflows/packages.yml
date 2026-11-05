@@ -41,7 +41,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./packaging/verify_windows.ps1
-      - name: Verify AppImage on X11 without system Python
+      - name: Verify AppImage on X11 using the bundled runtime
         if: runner.os == 'Linux'
         shell: bash
         run: |

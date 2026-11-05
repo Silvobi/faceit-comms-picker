@@ -123,11 +123,12 @@ For just the team commands:
 Build on the target operating system using Python 3.14:
 
 ```powershell
-py -m pip install -r requirements-build.txt
-py packaging/build.py
+py -m venv .venv-build
+.\.venv-build\Scripts\python.exe -m pip install -r requirements-build.txt
+.\.venv-build\Scripts\python.exe packaging/build.py
 ```
 
-Windows also requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Linux requires Go 1.23 or newer, `squashfs-tools`, and the Qt/X11 system libraries listed in [the workflow](.github/workflows/packages.yml). On Linux, use `python3` instead of `py`. The builder produces packages and SHA-256 checksums under `dist/packages/`.
+Windows also requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Linux requires Go 1.23 or newer, `squashfs-tools`, and the Qt/X11 system libraries listed in [the workflow](.github/workflows/packages.yml). On Linux, create the environment with `python3 -m venv .venv-build` and use `.venv-build/bin/python` for the two remaining commands. Build from a clean environment. The builder produces packages, third-party notices, and SHA-256 checksums under `dist/`.
 
 The build pins the parser to commit `5a892a6181c38b8d0bece1d162a59bdacee6ac0e`. Windows uses the matching executable checked into the repository; Linux compiles the same revision as a native `csda` executable. External source/tool downloads are checked against pinned SHA-256 hashes.
 
